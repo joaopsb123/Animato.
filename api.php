@@ -1,12 +1,14 @@
 <?php
 /*********************************************************************
- *                          AnFire API                               *
+ * AnFire API                               *
  * ----------------------------------------------------------------- *
  * COMO UTILIZAR:                                                    *
  * Github do projeto: https://github.com/MestreTM/AnFireAPI/         *
  *********************************************************************/
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+
+// CORREÇÃO 1: Desativar a exibição de erros brutos que quebram as respostas JSON na nuvem
+error_reporting(0);
+ini_set('display_errors', 0);
 
 header('Content-Type: application/json');
 
@@ -23,7 +25,6 @@ define('API_KEY', 'Senha123');
 
 
 // Estabelece a conexão com o banco de dados usando PDO.
-
 function getDatabaseConnection(): PDO
 {
     $dsn = 'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4';
@@ -41,7 +42,6 @@ function getDatabaseConnection(): PDO
 }
 
 // Cria a tabela 'api_cache' se ela não existir.
-
 function createCacheTableIfNotExists(PDO $pdo): void
 {
     $sql = "
@@ -101,6 +101,24 @@ $animeScore = null;
 $animeVotes = null;
 $youtubeTrailer = null;
 
+// CORREÇÃO 2: Função centralizada usando cURL com User-Agent para contornar o bloqueio de requisições na nuvem
+function fetchHTMLWithCurl(string $url): ?string
+{
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    
+    $html = curl_exec($ch);
+    curl_close($ch);
+    
+    return $html ? $html : null;
+}
+
 function getApiResponse(array $params, bool $useCache, bool $force, bool $update): array
 {
     if ($useCache) {
@@ -116,7 +134,6 @@ function getApiResponse(array $params, bool $useCache, bool $force, bool $update
             $cachedData = json_decode($cachedResponse, true);
 
             if ($update) {
-                // Se anime_slug não foi fornecido, mas está no cache, use-o
                 if (!$animeSlug && isset($cachedData['anime_slug'])) {
                     $animeSlug = $cachedData['anime_slug'];
                 }
@@ -125,7 +142,6 @@ function getApiResponse(array $params, bool $useCache, bool $force, bool $update
                     return ['error' => 'anime_slug não fornecido e não encontrado no cache.'];
                 }
 
-                // Encontrar o último episódio existente
                 $lastEpisode = 0;
                 foreach ($cachedData['episodes'] as $ep) {
                     if ($ep['episode'] > $lastEpisode) {
@@ -133,40 +149,31 @@ function getApiResponse(array $params, bool $useCache, bool $force, bool $update
                     }
                 }
 
-                // Buscar novos episódios a partir do próximo episódio
                 $newEpisodes = testEpisodes($animeSlug, $lastEpisode + 1);
 
                 if (!empty($newEpisodes)) {
-                    // Mesclar novos episódios com os existentes
                     $cachedData['episodes'] = array_merge($cachedData['episodes'], $newEpisodes);
 
-                    // Coletar os números dos novos episódios
                     $new_episode_numbers = array_map(function($ep) {
                         return $ep['episode'];
                     }, $newEpisodes);
 
-                    // Adicionar informações sobre os novos episódios
                     $cachedData['new_episodes'] = $new_episode_numbers;
-
-                    // Atualizar o cache com os novos dados
                     storeCacheResponse($pdo, $animeSlug, $animeLink, json_encode($cachedData));
 
                     return $cachedData;
                 } else {
-                    // Nenhum novo episódio encontrado
                     $cachedData['new_episodes'] = [];
                     return $cachedData;
                 }
             }
 
             if (!$force) {
-                // Retornar dados do cache
                 return $cachedData;
             }
         }
     }
 
-    // Processa a solicitação diretamente
     $response = processApiRequest($params);
 
     if ($useCache && !isset($response['error'])) {
@@ -176,7 +183,6 @@ function getApiResponse(array $params, bool $useCache, bool $force, bool $update
 
     return $response;
 }
-
 
 function getCachedResponse(PDO $pdo, ?string $animeSlug, ?string $animeLink): ?string
 {
@@ -276,7 +282,6 @@ function processApiRequest(array $params): array
 
 $response = getApiResponse($_GET, USE_CACHE, $force, $update);
 
-// Define o código de resposta apropriado em caso de erro
 if (isset($response['error'])) {
     http_response_code(400);
 }
@@ -285,11 +290,13 @@ echo json_encode($response, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
 function fetchAnimeSlug(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $nodes = $xpath->query("//div[contains(@class, 'div_video_list')]//a");
@@ -306,11 +313,13 @@ function fetchAnimeSlug(string $animeLink): ?string
 
 function fetchAnimeTitle(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $titleNode = $xpath->query("//h1[contains(@class, 'quicksand400')]")->item(0);
@@ -320,11 +329,13 @@ function fetchAnimeTitle(string $animeLink): ?string
 
 function fetchAnimeTitle1(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $titleNode = $xpath->query("//h6[contains(@class, 'text-gray')]")->item(0);
@@ -334,11 +345,13 @@ function fetchAnimeTitle1(string $animeLink): ?string
 
 function fetchAnimeImage(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $imageNode = $xpath->query("//div[contains(@class, 'sub_animepage_img')]//img")->item(0);
@@ -348,11 +361,13 @@ function fetchAnimeImage(string $animeLink): ?string
 
 function fetchAnimeInfo(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $infoNodes = $xpath->query("//div[contains(@class, 'animeInfo')]//a");
@@ -367,11 +382,13 @@ function fetchAnimeInfo(string $animeLink): ?string
 
 function fetchAnimeSynopsis(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $synopsisNode = $xpath->query("//div[contains(@class, 'divSinopse')]//span[contains(@class, 'spanAnimeInfo')]")->item(0);
@@ -381,11 +398,13 @@ function fetchAnimeSynopsis(string $animeLink): ?string
 
 function fetchAnimeScore(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $scoreNode = $xpath->query("//h4[@id='anime_score']")->item(0);
@@ -395,11 +414,13 @@ function fetchAnimeScore(string $animeLink): ?string
 
 function fetchAnimeVotes(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $votesNode = $xpath->query("//h6[@id='anime_votos']")->item(0);
@@ -409,11 +430,13 @@ function fetchAnimeVotes(string $animeLink): ?string
 
 function fetchYoutubeTrailer(string $animeLink): ?string
 {
-    $html = @file_get_contents($animeLink);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($animeLink);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $trailerNode = $xpath->query("//div[@id='iframe-trailer']//iframe")->item(0);
@@ -421,17 +444,17 @@ function fetchYoutubeTrailer(string $animeLink): ?string
     return $trailerNode ? $trailerNode->getAttribute('src') : null;
 }
 
-// Testa os episódios do anime a partir de um número específico até o máximo especificado. O padrão é 200.
-
 function testEpisodes(string $animeSlug, int $startEpisode = 1, int $maxEpisodes = 200): array
 {
     $results = [];
 
     for ($episode = $startEpisode; $episode <= $maxEpisodes; $episode++) {
         $url = "https://animefire.plus/video/$animeSlug/$episode";
-        $response = @file_get_contents($url);
+        
+        // CORREÇÃO 3: Substituído o file_get_contents cru por cURL para as chamadas de endpoint de vídeo
+        $response = fetchHTMLWithCurl($url);
 
-        if ($response === false) {
+        if (!$response) {
             break;
         }
 
@@ -508,11 +531,13 @@ function testEpisodes(string $animeSlug, int $startEpisode = 1, int $maxEpisodes
 
 function fetchBloggerIframeUrl(string $episodePageUrl): ?string
 {
-    $html = @file_get_contents($episodePageUrl);
-    if ($html === false) return null;
+    $html = fetchHTMLWithCurl($episodePageUrl);
+    if (!$html) return null;
 
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    libxml_use_internal_errors(true);
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
+    libxml_clear_errors();
 
     $xpath = new DOMXPath($dom);
     $iframeNode = $xpath->query("//iframe[contains(@src, 'blogger.com')]")->item(0);
@@ -520,12 +545,6 @@ function fetchBloggerIframeUrl(string $episodePageUrl): ?string
     return $iframeNode ? $iframeNode->getAttribute('src') : null;
 }
 
-/**
- * Limpa o texto removendo caracteres indesejados.
- *
- * @param string $text
- * @return string
- */
 function cleanText(?string $text): string
 {
     if ($text === null) {
@@ -551,12 +570,6 @@ function cleanText(?string $text): string
     return strtr($text, $unwanted);
 }
 
-/**
- * Formata a URL removendo barras invertidas.
- *
- * @param string $url
- * @return string
- */
 function formatUrl(string $url): string
 {
     return str_replace(["\\/", "\\"], "/", $url);
