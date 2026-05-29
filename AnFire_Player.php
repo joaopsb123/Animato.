@@ -9,8 +9,8 @@ session_start();
  *********************************************************************/
 
 // CONFIGURAÇÕES DA API
-define('API_KEY', 'SUA_API_KEY');
-define('API_URL', 'http://localhost/api.php');
+define('API_KEY', 'Senha123');
+define('API_URL', 'https://animato-2.onrender.com/api.php');
 
 /**
  * Função para chamar a API com o link fornecido.
