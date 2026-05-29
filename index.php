@@ -1,4 +1,8 @@
 <?php
+// Desativa a exibição de avisos, notificações e mensagens 'Deprecated' que quebram o layout ou o JSON
+error_reporting(0);
+ini_set('display_errors', 0);
+
 $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? "https" : "http";
 $host = $_SERVER['HTTP_HOST'];
 $baseURL = $protocol . "://" . $host;
@@ -11,9 +15,10 @@ function fetchHTML($url) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
     
-    // CORREÇÃO 1: Fingir ser um navegador real para não ser bloqueado na nuvem
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Evita problemas com certificados SSL
+    // Simula um navegador real para passar pela proteção do Cloudflare na nuvem do Render
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
     
     $html = curl_exec($ch);
     curl_close($ch);
@@ -25,15 +30,16 @@ function extractSearchResults($html) {
     
     $dom = new DOMDocument();
     
-    // CORREÇÃO 2: Impedir bugs de parsing do HTML5 no DOMDocument
+    // Evita que o leitor de HTML jogue erros na tela por causa de tags modernas do HTML5
     libxml_use_internal_errors(true);
-    $dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'));
+    // Força o carregamento usando a tag XML de UTF-8 para não bugar a acentuação dos títulos dos animes
+    $dom->loadHTML('<?xml encoding="UTF-8">' . $html);
     libxml_clear_errors();
     
     $xpath = new DOMXPath($dom);
     $results = [];
     
-    // Varre os cards de animes
+    // Captura os blocos de cards dos animes do site alvo
     $cards = $xpath->query("//div[contains(@class, 'divCardUltimosEps')]");
 
     foreach ($cards as $card) {
@@ -42,11 +48,8 @@ function extractSearchResults($html) {
         $title = $xpath->query(".//h3[@class='animeTitle']", $card)->item(0);
 
         if ($link && $image && $title) {
-            // Pega o href do link original do AnimeFire
             $originalHref = $link->getAttribute('href');
             
-            // O scrapper do repositório espera receber apenas o final da URL (slug) ou o link completo.
-            // Para garantir o funcionamento da AnFire_Player.php, passamos o link formatado:
             $results[] = [
                 'url' => HOST . "/AnFire_Player.php?link=" . urlencode($originalHref),
                 'image' => $image->getAttribute('data-src') ? $image->getAttribute('data-src') : $image->getAttribute('src'),
@@ -97,6 +100,7 @@ function generateSearchInterface($initialResults = []) {
                 border: 1px solid #555;
                 background-color: #1e1e1e;
                 color: #fff;
+                outline: none;
             }
 
             .search-button {
@@ -105,7 +109,13 @@ function generateSearchInterface($initialResults = []) {
                 border: none;
                 background-color: #5288e5;
                 color: #000;
+                font-weight: bold;
                 cursor: pointer;
+                transition: background 0.2s;
+            }
+
+            .search-button:hover {
+                background-color: #3b6bb3;
             }
 
             .results-container {
@@ -115,9 +125,9 @@ function generateSearchInterface($initialResults = []) {
                 text-align: center;
                 display: flex;
                 flex-wrap: wrap;
-                gap: 10px;
+                gap: 15px;
                 justify-content: center;
-                padding: 10px;
+                padding: 20px;
                 border: 1px solid #333;
                 border-radius: 10px;
                 background-color: #1e1e1e;
@@ -125,27 +135,37 @@ function generateSearchInterface($initialResults = []) {
             }
 
             .result-item {
-                margin: 10px;
                 display: inline-block;
                 width: 200px;
-                transition: transform 0.3s;
+                transition: transform 0.3s, box-shadow 0.3s;
+                background: #151515;
+                border-radius: 10px;
+                overflow: hidden;
+                padding-bottom: 10px;
             }
 
             .result-item img {
                 width: 100%;
                 height: 280px;
                 object-fit: cover;
-                border-radius: 10px;
+                border-radius: 10px 10px 0 0;
             }
 
             .result-item p {
                 color: #ccc;
-                font-size: 1rem;
-                margin-top: 5px;
+                font-size: 0.95rem;
+                margin: 8px 10px 0 10px;
+                line-height: 1.2;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                display: -webkit-box;
+                -webkit-line-clamp: 2;
+                -webkit-box-orient: vertical;
             }
 
             .result-item:hover {
-                transform: scale(1.05);
+                transform: scale(1.04);
+                box-shadow: 0px 5px 15px rgba(0,0,0,0.5);
             }
 
             a {
@@ -163,10 +183,14 @@ function generateSearchInterface($initialResults = []) {
             }
 
             footer a {
-                color: #007bff;
+                color: #5288e5;
                 text-decoration: none;
                 display: inline-flex;
                 align-items: center;
+            }
+
+            footer a:hover {
+                text-decoration: underline;
             }
 
             footer img {
@@ -238,8 +262,8 @@ function generateSearchInterface($initialResults = []) {
                     const container = document.getElementById('resultsContainer');
                     container.innerHTML = '';
                     
-                    if(results.length === 0) {
-                        container.innerHTML = '<p style="color: #ff4500; padding: 20px;">Nenhum anime encontrado.</p>';
+                    if (results.length === 0) {
+                        container.innerHTML = '<p style="color: #ff4500; padding: 20px; font-weight: bold;">Nenhum anime encontrado.</p>';
                     } else {
                         results.forEach(item => {
                             const div = document.createElement('div');
@@ -254,7 +278,7 @@ function generateSearchInterface($initialResults = []) {
                         });
                     }
                 } catch (error) {
-                    alert('Ocorreu um erro ao buscar os resultados.');
+                    alert('Ocorreu um erro ao processar a busca de animes.');
                 } finally {
                     loader.style.display = 'none';
                     loaderBackground.style.display = 'none';
@@ -274,10 +298,10 @@ function generateSearchInterface($initialResults = []) {
     </head>
     <body>
         <div id="loader-background"></div>
-        <div id="loader">Carregando...</div>
+        <div id="loader">Buscando animes...</div>
         
         <br>
-        <img src="https://i.imgur.com/YFFnp7E.png" width="200" alt="Logo">
+        <img src="https://i.imgur.com/YFFnp7E.png" width="200" alt="AnFire Logo">
         
         <div class="search-container">
             <input type="text" id="searchQuery" class="search-input" placeholder="Buscar animes...">
@@ -289,7 +313,7 @@ function generateSearchInterface($initialResults = []) {
         <br>
         <div id="resultsContainer" class="results-container">
             <?php if (empty($initialResults)): ?>
-                <p style="color: #bbb; padding: 20px;">Nenhum anime atualizado recentemente ou erro de conexão.</p>
+                <p style="color: #bbb; padding: 20px;">Nenhum anime atualizado recentemente ou erro de conexão com a fonte.</p>
             <?php else: ?>
                 <?php foreach ($initialResults as $item): ?>
                     <div class="result-item">
@@ -312,7 +336,7 @@ function generateSearchInterface($initialResults = []) {
     <?php
 }
 
-// Roteador de Busca via AJAX
+// Intercepta a requisição AJAX enviada pelo JavaScript para fazer buscas
 if (isset($_GET['search'])) {
     $searchTerm = $_GET['search'];
     $searchUrl = "https://animefire.plus/pesquisar/" . urlencode(strtolower($searchTerm));
@@ -324,7 +348,7 @@ if (isset($_GET['search'])) {
     exit;
 }
 
-// Carregamento Inicial da Home
+// Execução padrão ao entrar na página inicial (Lista os animes atualizados)
 $html = fetchHTML("https://animefire.plus/animes-atualizados");
 $initialResults = extractSearchResults($html);
 generateSearchInterface($initialResults);
