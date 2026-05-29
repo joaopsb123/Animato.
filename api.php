@@ -19,7 +19,7 @@ define('DB_PASS', '');
 define('USE_CACHE', false);       // Habilita ou desabilita o uso de cache (BANCO DE DADOS)
 
 // Configuração da API Key
-define('API_KEY', 'SUA_API_KEY');     
+define('API_KEY', 'Senha123');     
 
 
 // Estabelece a conexão com o banco de dados usando PDO.
