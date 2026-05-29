@@ -7,7 +7,7 @@ RUN sed -i 's/<VirtualHost \*:80>/<VirtualHost \*:${PORT}>/g' /etc/apache2/sites
 # Copia todos os seus arquivos PHP para a pasta do servidor web
 COPY . /var/www/html/
 
-# Ajusta as permissões para não dar erro
-RUN chown -r www-data:www-data /var/www/html/
+# O AJUSTE AQUI: Mudado de -r para -R maiúsculo
+RUN chown -R www-data:www-data /var/www/html/
 
 EXPOSE 80
