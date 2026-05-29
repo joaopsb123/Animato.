@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: api-anime-player
-    env: php
-    buildCommand: echo "Pronto para rodar"
-    startCommand: php -d opcache.enable=0 -d opcache.enable_cli=0 -d sys_temp_dir=/tmp -S 0.0.0.0:$PORT
