@@ -10,17 +10,30 @@ function fetchHTML($url) {
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    
+    // CORREÇÃO 1: Fingir ser um navegador real para não ser bloqueado na nuvem
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Evita problemas com certificados SSL
+    
     $html = curl_exec($ch);
     curl_close($ch);
     return $html;
 }
 
 function extractSearchResults($html) {
+    if (empty($html)) return [];
+    
     $dom = new DOMDocument();
-    @$dom->loadHTML($html);
+    
+    // CORREÇÃO 2: Impedir bugs de parsing do HTML5 no DOMDocument
+    libxml_use_internal_errors(true);
+    $dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'));
+    libxml_clear_errors();
+    
     $xpath = new DOMXPath($dom);
-
     $results = [];
+    
+    // Varre os cards de animes
     $cards = $xpath->query("//div[contains(@class, 'divCardUltimosEps')]");
 
     foreach ($cards as $card) {
@@ -29,9 +42,14 @@ function extractSearchResults($html) {
         $title = $xpath->query(".//h3[@class='animeTitle']", $card)->item(0);
 
         if ($link && $image && $title) {
+            // Pega o href do link original do AnimeFire
+            $originalHref = $link->getAttribute('href');
+            
+            // O scrapper do repositório espera receber apenas o final da URL (slug) ou o link completo.
+            // Para garantir o funcionamento da AnFire_Player.php, passamos o link formatado:
             $results[] = [
-                'url' => HOST . "/AnFire_Player.php?link=" . urlencode($link->getAttribute('href')),
-                'image' => $image->getAttribute('data-src') ?? $image->getAttribute('src'),
+                'url' => HOST . "/AnFire_Player.php?link=" . urlencode($originalHref),
+                'image' => $image->getAttribute('data-src') ? $image->getAttribute('data-src') : $image->getAttribute('src'),
                 'title' => trim($title->nodeValue)
             ];
         }
@@ -103,27 +121,31 @@ function generateSearchInterface($initialResults = []) {
                 border: 1px solid #333;
                 border-radius: 10px;
                 background-color: #1e1e1e;
+                min-height: 200px;
             }
 
             .result-item {
                 margin: 10px;
                 display: inline-block;
                 width: 200px;
+                transition: transform 0.3s;
             }
 
             .result-item img {
                 width: 100%;
+                height: 280px;
+                object-fit: cover;
                 border-radius: 10px;
             }
 
             .result-item p {
-                transition: transform 0.3s;
                 color: #ccc;
                 font-size: 1rem;
+                margin-top: 5px;
             }
 
             .result-item:hover {
-                transform: scale(1.1);
+                transform: scale(1.05);
             }
 
             a {
@@ -131,12 +153,13 @@ function generateSearchInterface($initialResults = []) {
             }
 
             footer {
-                margin-top: auto;
+                margin-top: 40px;
                 text-align: center;
                 padding: 20px;
                 background: #1e1e1e;
                 color: #ffffff;
                 font-size: 14px;
+                width: 100%;
             }
 
             footer a {
@@ -144,10 +167,6 @@ function generateSearchInterface($initialResults = []) {
                 text-decoration: none;
                 display: inline-flex;
                 align-items: center;
-            }
-
-            footer a:hover {
-                text-decoration: underline;
             }
 
             footer img {
@@ -180,22 +199,18 @@ function generateSearchInterface($initialResults = []) {
             }
 
             @keyframes pulse {
-                0%, 100% {
-                    opacity: 1;
-                }
-                50% {
-                    opacity: 0.5;
-                }
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.5; }
             }
 
             .home-link {
                 display: inline-block;
-                margin: 15px 0;
+                margin: 15px 5px;
                 font-size: 1rem;
                 font-weight: bold;
                 color: #5288e5;
                 text-decoration: none;
-                padding: 5px 5px;
+                padding: 5px 15px;
                 border: 2px solid #5288e5;
                 border-radius: 5px;
                 transition: all 0.3s ease;
@@ -208,7 +223,7 @@ function generateSearchInterface($initialResults = []) {
         </style>
         <script>
             async function searchAnimes() {
-                const query = document.getElementById('searchQuery').value.toLowerCase();
+                const query = document.getElementById('searchQuery').value.trim();
                 if (!query) return alert('Digite algo para buscar.');
 
                 const loader = document.getElementById('loader');
@@ -222,17 +237,22 @@ function generateSearchInterface($initialResults = []) {
 
                     const container = document.getElementById('resultsContainer');
                     container.innerHTML = '';
-                    results.forEach(item => {
-                        const div = document.createElement('div');
-                        div.className = 'result-item';
-                        div.innerHTML = `
-                            <a href="${item.url}">
-                                <img src="${item.image}" alt="${item.title}">
-                                <p>${item.title}</p>
-                            </a>
-                        `;
-                        container.appendChild(div);
-                    });
+                    
+                    if(results.length === 0) {
+                        container.innerHTML = '<p style="color: #ff4500; padding: 20px;">Nenhum anime encontrado.</p>';
+                    } else {
+                        results.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'result-item';
+                            div.innerHTML = `
+                                <a href="${item.url}">
+                                    <img src="${item.image}" alt="${item.title}" onerror="this.src='https://via.placeholder.com/200x280?text=Sem+Imagem'">
+                                    <p>${item.title}</p>
+                                </a>
+                            `;
+                            container.appendChild(div);
+                        });
+                    }
                 } catch (error) {
                     alert('Ocorreu um erro ao buscar os resultados.');
                 } finally {
@@ -251,28 +271,37 @@ function generateSearchInterface($initialResults = []) {
                 });
             });
         </script>
-        <div id="loader-background"></div>
-        <div id="loader">Carregando...</div>
     </head>
     <body>
-        <img src="https://i.imgur.com/YFFnp7E.png" width="200">
+        <div id="loader-background"></div>
+        <div id="loader">Carregando...</div>
+        
+        <br>
+        <img src="https://i.imgur.com/YFFnp7E.png" width="200" alt="Logo">
+        
         <div class="search-container">
             <input type="text" id="searchQuery" class="search-input" placeholder="Buscar animes...">
             <button class="search-button" onclick="searchAnimes()">Buscar</button>
             <br>
-            <a href='/' class='home-link'>Home</a>
+            <a href='index.php' class='home-link'>Home</a>
         </div>
-        <div id="resultsContainer" class="results-container">
-            <?php foreach ($initialResults as $item): ?>
-                <div class="result-item">
-                    <a href="<?= $item['url'] ?>">
-                        <img src="<?= $item['image'] ?>" alt="<?= $item['title'] ?>">
-                        <p><?= $item['title'] ?></p>
-                    </a>
-                </div>
-            <?php endforeach; ?>
-        </div>
+        
         <br>
+        <div id="resultsContainer" class="results-container">
+            <?php if (empty($initialResults)): ?>
+                <p style="color: #bbb; padding: 20px;">Nenhum anime atualizado recentemente ou erro de conexão.</p>
+            <?php else: ?>
+                <?php foreach ($initialResults as $item): ?>
+                    <div class="result-item">
+                        <a href="<?= $item['url'] ?>">
+                            <img src="<?= $item['image'] ?>" alt="<?= $item['title'] ?>" onerror="this.src='https://via.placeholder.com/200x280?text=Sem+Imagem'">
+                            <p><?= $item['title'] ?></p>
+                        </a>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
+        </div>
+        
         <footer>
             <a href="https://github.com/MestreTM/AnFireAPI/" target="_blank">
                 <img src="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png" alt="GitHub Logo"> AnFireAPI - ver projeto no GitHub.
@@ -283,9 +312,10 @@ function generateSearchInterface($initialResults = []) {
     <?php
 }
 
+// Roteador de Busca via AJAX
 if (isset($_GET['search'])) {
     $searchTerm = $_GET['search'];
-    $searchUrl = "https://animefire.plus/pesquisar/" . urlencode($searchTerm);
+    $searchUrl = "https://animefire.plus/pesquisar/" . urlencode(strtolower($searchTerm));
     $html = fetchHTML($searchUrl);
     $results = extractSearchResults($html);
 
@@ -294,6 +324,7 @@ if (isset($_GET['search'])) {
     exit;
 }
 
+// Carregamento Inicial da Home
 $html = fetchHTML("https://animefire.plus/animes-atualizados");
 $initialResults = extractSearchResults($html);
 generateSearchInterface($initialResults);
